@@ -1,0 +1,158 @@
+#!/usr/bin/env ruby
+
+require 'csv'
+require 'nokogiri'
+require 'optparse'
+require 'ostruct'
+require_relative 'lib/otx_log'
+
+DEFAULT_OPTIONS = {
+    overwrite_output_file: false,
+    vehicle_name: 'vehicle'
+}
+
+options = OpenStruct.new DEFAULT_OPTIONS
+
+class CustomOptionParser < OptionParser
+
+    def display_usage
+        STDERR.puts self
+        exit 1
+    end
+
+end
+
+op = CustomOptionParser.new
+op.banner = "Usage: #$0 [options] otx_log.csv"
+op.on('-O', '--overwrite', 'Overwrite output file if it exists') { options.overwrite_output_file = true }
+op.on('-v vehicle_name', '--vehicle-name=name', 'Change the vehicle name in the resulting KML file') { |name| options.vehicle_name = name }
+op.on('-o output_file', '--output=file', 'Set the output file. By default the KML file will be output in the current directory with the input file name with the .kml extension') { |output_filepath| options.output_filepath = output_filepath }
+op.on('-n document_name', '--document-name=name', 'Sets the name embedded into the document that will be displayed by the reader program') { |document_name| options.document_name = document_name }
+
+begin
+    op.parse!
+    raise ArgumentError, 'too few arguments' if ARGV.count < 1
+    raise ArgumentError, 'too many arguments' if ARGV.count > 1
+rescue ArgumentError, OptionParser::InvalidOption => error
+    STDERR.puts "Argument error: #{error}"
+    op.display_usage
+end
+
+input_filepath = ARGV.first
+output_filepath = options.output_filepath || "#{input_filepath}.kml"
+document_name = options.document_name || input_filepath
+
+if not options.overwrite_output_file and File.exists? output_filepath
+    STDERR.puts "Error: the output file already exists: #{output_filepath}"
+    exit 2
+end
+
+input_log = OTXLog.open input_filepath
+
+begin
+    input_log.select *%w[ Date Time GPS Hdg(@) Alt(m) ]
+    output_kml = File.open output_filepath, 'w'
+rescue ArgumentError => error
+    STDERR.puts "Error: Input file: #{error}"
+    exit 3
+rescue Errno::EACCES, Errno::EISDIR => error
+    STDERR.puts "Error opening output file: #{error}"
+    exit 4
+end
+
+builder = Nokogiri::XML::Builder.new(:encoding => 'UTF-8') do |xml|
+    xml.kml(xmlns: 'http://www.opengis.net/kml/2.2', 'xmlns:gx': 'http://www.google.com/kml/ext/2.2', 'xmlns:kml': 'http://www.opengis.net/kml/2.2', 'xmlns:atom': 'http://www.w3.org/2005/Atom') do
+        xml.Document do
+            xml.name document_name
+            xml.Style(id: 'yellowLineGreenPoly') do
+                xml.LineStyle do
+                    xml.color '7f00ffff'
+                    xml.width 4
+                end
+                xml.PolyStyle { xml.color '7f00ff00' }
+            end
+            xml.Style(id: 'multiTrack_h0') do
+		xml.IconStyle do
+                    xml.scale 1.2
+                    xml.Icon do
+                        xml.href 'http://earth.google.com/images/kml-icons/track-directional/track-0.png'
+                    end
+                end
+		xml.LineStyle do
+                    xml.color '99ffac59'
+                    xml.width 8
+                end
+            end
+            xml.Style(id: 'multiTrack_n0') do
+		xml.IconStyle do
+                    xml.Icon do
+                        xml.href 'http://earth.google.com/images/kml-icons/track-directional/track-0.png'
+                    end
+                end
+		xml.LineStyle do
+                    xml.color '99ffac59'
+                    xml.width 6
+                end
+            end
+            xml.StyleMap(id: 'multiTrack0') do
+		xml.Pair do
+                    xml.key 'normal'
+                    xml.styleUrl '#multiTrack_n0'
+                end
+		xml.Pair do
+                    xml.key 'highlight'
+                    xml.styleUrl '#multiTrack_h0'
+                end
+            end
+            xml.Folder do
+                xml.name 'Paths'
+                linestring_coordinates = input_log.kml_linestring_coordinates
+                xml.Placemark do
+                    xml.name 'Flight path'
+                    xml.styleUrl '#yellowLineGreenPoly'
+                    xml.Style do
+                        xml.LineStyle do
+                            xml.color 'ff00ffff'
+                            xml.colorMode 'normal'
+                            xml.width 4
+                        end
+                    end
+                    xml.LineString do
+                        xml.extrude 0
+                        xml.altitudeMode 'absolute'
+                        xml.coordinates linestring_coordinates
+                    end
+                end
+                xml.Placemark do
+                    xml.name 'Extruded flight path'
+                    xml.styleUrl '#yellowLineGreenPoly'
+                    xml.Style do
+                        xml.LineStyle do
+                            xml.color 'ff00ffff'
+                            xml.colorMode 'normal'
+                            xml.width 4
+                        end
+                    end
+                    xml.LineString do
+                        xml.extrude 1
+                        xml.altitudeMode 'absolute'
+                        xml.coordinates linestring_coordinates
+                    end
+                end
+            end
+            xml.Folder do
+                xml.name 'Track'
+                xml.Placemark do
+                    xml.name options.vehicle_name
+                    xml.styleUrl '#multiTrack0'
+                    xml['gx'].Track do
+                        input_log.each { |data| xml.when OTXLog.to_kml_datetime(data) }
+                        input_log.kml_track_coords.each { |coord| xml['gx'].coord coord }
+                    end
+                end
+            end
+        end
+    end
+end
+
+output_kml.puts builder.to_xml
