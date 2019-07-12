@@ -47,15 +47,15 @@ if not options.overwrite_output_file and File.exists? output_filepath
     exit 2
 end
 
-input_log = OTXLog.open input_filepath
 
 begin
+    input_log = OTXLog.open input_filepath
     input_log.select *%w[ Date Time GPS Hdg(@) Alt(m) ]
     output_kml = File.open output_filepath, 'w'
 rescue ArgumentError => error
     STDERR.puts "Error: Input file: #{error}"
     exit 3
-rescue Errno::EACCES, Errno::EISDIR => error
+rescue Errno::EACCES, Errno::EISDIR, Errno::ENOENT => error
     STDERR.puts "Error opening output file: #{error}"
     exit 4
 end

@@ -50,7 +50,7 @@ class OTXLog
 
     def self.require_columns log_data, *columns
         missing_columns = columns - log_data.keys
-        raise ArgumentError, "argument is missing required data columns: #{missing_columns.join(', ')}", caller[1..-1] unless missing_columns.empty?
+        raise ArgumentError, "missing required data columns: #{missing_columns.join(', ')}", caller[1..-1] unless missing_columns.empty?
     end
 
     def self.to_kml_datetime log_data
